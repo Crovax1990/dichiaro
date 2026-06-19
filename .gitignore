@@ -1,0 +1,19 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Dati dichiarazioni 730 (PDF con dati personali)
+data/
+doc/
+
+# SQLite database files
+*.db
+*.db-shm
+*.db-wal
