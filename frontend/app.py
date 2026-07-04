@@ -15,7 +15,7 @@ from backend.models import (
 )
 from backend.parser.extractor import parse_730
 from backend.parser.importer import import_pdf_to_db
-from backend.parser.registry import supported_years
+from datetime import date
 
 st.set_page_config(
     page_title="Dichiaro",
@@ -91,23 +91,6 @@ def _oneri_category(code: str, desc: str | None) -> str:
     return f"Altro ({code})"
 
 
-def _broad_category(cat: str) -> str:
-    mapping = {
-        "Spese sanitarie": "Spese sanitarie",
-        "Spese sanitarie (disabilità)": "Spese sanitarie",
-        "Spese sanitarie (patologie esenti)": "Spese sanitarie",
-        "Interessi mutuo prima casa": "Interessi mutuo",
-        "Assicurazioni vita/infortuni": "Assicurazioni",
-        "Spese istruzione": "Istruzione",
-        "Spese universitarie": "Istruzione",
-        "Recupero edilizio": "Recupero edilizio",
-        "Risparmio energetico": "Risparmio energetico",
-    }
-    if cat in mapping:
-        return mapping[cat]
-    return "Altro"
-
-
 def _pl_preview(pl: dict, suffix: str) -> str:
     for k, v in pl.items():
         if k.endswith(suffix) and isinstance(v, dict):
@@ -150,7 +133,7 @@ else:
 
 # Anno dropdown
 anni_disponibili = [d.anno_fiscale for d in session.query(Dichiarazione.anno_fiscale).distinct().order_by(Dichiarazione.anno_fiscale)]
-anno = st.sidebar.selectbox("Anno fiscale", anni_disponibili + [max(supported_years())] if anni_disponibili else supported_years(), index=len(anni_disponibili)-1 if anni_disponibili else 0)
+anno = st.sidebar.selectbox("Anno fiscale", anni_disponibili + [date.today().year] if anni_disponibili else [date.today().year], index=len(anni_disponibili)-1 if anni_disponibili else 0)
 
 # Navigation
 page = st.sidebar.radio("Sezione", ["📤 Importa PDF", "📊 Riepilogo Annuale", "📈 Trend", "🔔 Alert"])
@@ -496,7 +479,17 @@ elif page == "📈 Trend":
                     for o in oneri:
                         base_code = o.codice_rigo.split(".")[0] if "." in o.codice_rigo else o.codice_rigo
                         cat = _oneri_category(base_code, o.descrizione)
-                        broad = _broad_category(cat)
+                        broad = {
+                            "Spese sanitarie": "Spese sanitarie",
+                            "Spese sanitarie (disabilità)": "Spese sanitarie",
+                            "Spese sanitarie (patologie esenti)": "Spese sanitarie",
+                            "Interessi mutuo prima casa": "Interessi mutuo",
+                            "Assicurazioni vita/infortuni": "Assicurazioni",
+                            "Spese istruzione": "Istruzione",
+                            "Spese universitarie": "Istruzione",
+                            "Recupero edilizio": "Recupero edilizio",
+                            "Risparmio energetico": "Risparmio energetico",
+                        }.get(cat, "Altro")
                         cats[broad] = cats.get(broad, 0) + (o.importo or 0)
                     oneri_per_anno[d.anno_fiscale] = cats
 

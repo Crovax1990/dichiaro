@@ -45,9 +45,7 @@ def test_normalize_none_and_empty():
 # ── Parser integration ──────────────────────────────────────────────
 
 def test_parse_2025_pdf():
-    pdf_path = Path(__file__).parent.parent.parent / "data" / "DichiarazioneTestuale2025_GBBLCU90L02L117H_25061433554397977.pdf"
-    if not pdf_path.exists():
-        pdf_path = Path("/home/crovax/workspace/draiver-730/data/DichiarazioneTestuale2025_GBBLCU90L02L117H_25061433554397977.pdf")
+    pdf_path = Path(__file__).parent.parent / "data" / "DichiarazioneTestuale2025_RSSMRA80A01H501U_25061433554397977.pdf"
 
     if not pdf_path.exists():
         return  # skip if file not found
@@ -55,9 +53,9 @@ def test_parse_2025_pdf():
     result = parse_730(str(pdf_path))
 
     assert result["metadata"]["anno"] == 2025
-    assert result["metadata"]["codice_fiscale"] == "GBBLCU90L02L117H"
-    assert result["metadata"]["cognome"] == "GOBBI"
-    assert result["metadata"]["nome"] == "LUCA"
+    assert result["metadata"]["codice_fiscale"] == "RSSMRA80A01H501U"
+    assert result["metadata"]["cognome"] == "ROSSI"
+    assert result["metadata"]["nome"] == "MARIO"
 
     assert len(result["quadro_c"]) > 0
     assert len(result["quadro_e"]) > 0
@@ -73,7 +71,7 @@ def test_parse_2025_pdf():
 
 
 def test_parse_all_years():
-    data_dir = Path("/home/crovax/workspace/draiver-730/data")
+    data_dir = Path(__file__).parent.parent / "data"
     if not data_dir.exists():
         return
 

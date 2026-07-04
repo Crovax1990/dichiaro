@@ -13,9 +13,6 @@ def normalize_value(raw: str):
 
     raw = raw.replace("\u00a0", " ").replace("\xa0", " ")
 
-    # Strip trailing € or % for detection
-    has_euro = raw.endswith("€")
-    has_percent = raw.endswith("%")
     clean = raw.rstrip("€%").strip()
 
     # If it's purely numeric (possibly with . or , or -)

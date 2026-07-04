@@ -40,7 +40,7 @@ PDF testuali strutturati dell'Agenzia delle Entrate (file con suffisso `Testuale
 
 `DichiarazioneTestuale{ANNO}_{CODICEFISCALE}_{progressivo}.pdf`
 
-Es: `DichiarazioneTestuale2025_GBBLCU90L02L117H_25061433554397977.pdf`
+Es: `DichiarazioneTestuale2025_RSSMRA80A01H501U_25061433554397977.pdf`
 
 ## Comandi
 

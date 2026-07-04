@@ -5,8 +5,7 @@ from datetime import date
 
 from backend.models import (
     Base, Persona, Dichiarazione, QuadroC_Lavoro,
-    QuadroA_Terreni, QuadroB_Fabbricati, QuadroD_AltriRedditi,
-    QuadroE_Oneri, Risultato, create_engine_session,
+    QuadroB_Fabbricati, QuadroE_Oneri, Risultato, create_engine_session,
 )
 
 
@@ -17,9 +16,9 @@ def test_create_tables():
 
     try:
         persona = Persona(
-            codice_fiscale="GBBLCU90L02L117H",
-            nome="LUCA",
-            cognome="GOBBI",
+            codice_fiscale="RSSMRA80A01H501U",
+            nome="MARIO",
+            cognome="ROSSI",
             data_nascita=date(1990, 7, 2),
             sesso="M",
             comune_nascita="TERNI",
@@ -88,12 +87,12 @@ def test_duplicate_persona_prevented():
     session = SessionLocal()
 
     try:
-        p1 = Persona(codice_fiscale="GBBLCU90L02L117H", nome="LUCA", cognome="GOBBI")
+        p1 = Persona(codice_fiscale="RSSMRA80A01H501U", nome="MARIO", cognome="ROSSI")
         session.add(p1)
         session.commit()
 
         import sqlalchemy.exc
-        p2 = Persona(codice_fiscale="GBBLCU90L02L117H", nome="LUCA", cognome="GOBBI")
+        p2 = Persona(codice_fiscale="RSSMRA80A01H501U", nome="MARIO", cognome="ROSSI")
         session.add(p2)
         try:
             session.commit()

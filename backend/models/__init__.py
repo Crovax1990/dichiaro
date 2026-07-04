@@ -1,7 +1,7 @@
 from sqlalchemy import (
     Column, Integer, String, Float, Date, Boolean, ForeignKey, Text, create_engine, event
 )
-from sqlalchemy.orm import DeclarativeBase, relationship, sessionmaker, Session
+from sqlalchemy.orm import DeclarativeBase, relationship, sessionmaker
 
 
 class Base(DeclarativeBase):
@@ -34,30 +34,10 @@ class Dichiarazione(Base):
     note = Column(Text, nullable=True)
 
     persona = relationship("Persona", back_populates="dichiarazioni")
-    quadri_a = relationship("QuadroA_Terreni", back_populates="dichiarazione", cascade="all, delete-orphan")
     quadri_b = relationship("QuadroB_Fabbricati", back_populates="dichiarazione", cascade="all, delete-orphan")
     quadri_c = relationship("QuadroC_Lavoro", back_populates="dichiarazione", cascade="all, delete-orphan")
-    quadri_d = relationship("QuadroD_AltriRedditi", back_populates="dichiarazione", cascade="all, delete-orphan")
     quadri_e = relationship("QuadroE_Oneri", back_populates="dichiarazione", cascade="all, delete-orphan")
     risultato = relationship("Risultato", back_populates="dichiarazione", uselist=False, cascade="all, delete-orphan")
-
-
-class QuadroA_Terreni(Base):
-    __tablename__ = "quadro_a_terreni"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    dichiarazione_id = Column(Integer, ForeignKey("dichiarazione.id"), nullable=False, index=True)
-    rigo = Column(Integer, nullable=False)
-    reddito_dominicale = Column(Float, default=0)
-    reddito_agrario = Column(Float, default=0)
-    titolo = Column(String(50), nullable=True)
-    possesso = Column(String(50), nullable=True)
-    giorni = Column(Integer, nullable=True)
-    percentuale = Column(Float, default=100)
-    canone_affitto = Column(Float, default=0)
-    continuazione_rigo = Column(Integer, nullable=True)
-
-    dichiarazione = relationship("Dichiarazione", back_populates="quadri_a")
 
 
 class QuadroB_Fabbricati(Base):
@@ -89,20 +69,6 @@ class QuadroC_Lavoro(Base):
     tipologia = Column(String(50), default="dipendente")
 
     dichiarazione = relationship("Dichiarazione", back_populates="quadri_c")
-
-
-class QuadroD_AltriRedditi(Base):
-    __tablename__ = "quadro_d_altri_redditi"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    dichiarazione_id = Column(Integer, ForeignKey("dichiarazione.id"), nullable=False, index=True)
-    rigo = Column(Integer, nullable=False)
-    tipologia = Column(String(100), nullable=True)
-    importo = Column(Float, default=0)
-    ritenute = Column(Float, default=0)
-    note = Column(Text, nullable=True)
-
-    dichiarazione = relationship("Dichiarazione", back_populates="quadri_d")
 
 
 class QuadroE_Oneri(Base):
@@ -137,8 +103,6 @@ class Risultato(Base):
 
     acconto_irpef_prima_rata = Column(Float, default=0)
     acconto_irpef_seconda_rata = Column(Float, default=0)
-    acconto_cedolare_prima_rata = Column(Float, default=0)
-    acconto_cedolare_seconda_rata = Column(Float, default=0)
 
     reddito_complessivo = Column(Float, default=0)
     reddito_imponibile = Column(Float, default=0)
@@ -147,8 +111,6 @@ class Risultato(Base):
     detrazione_oneri = Column(Float, default=0)
     detrazione_recupero_edilizio = Column(Float, default=0)
     detrazione_risparmio_energetico = Column(Float, default=0)
-    eccedenza_precedente = Column(Float, default=0)
-    acconti_versati = Column(Float, default=0)
 
     dichiarazione = relationship("Dichiarazione", back_populates="risultato")
 

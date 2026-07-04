@@ -9,18 +9,6 @@ from backend.models import (
 )
 from backend.parser.extractor import parse_730
 
-# Utilizzo codes mapping
-UTILIZZO_MAP = {
-    1: "Abitazione principale",
-    2: "Abitazione principale (pertinenza)",
-    3: "Abitazione a disposizione",
-    4: "Abitazione tenuta a disposizione",
-    5: "Abitazione principale",
-    9: "Altro",
-    10: "Abitazione locata (libero mercato)",
-    11: "Abitazione locata (canone concordato)",
-}
-
 
 def import_pdf_to_db(
     pdf_path: str | Path,

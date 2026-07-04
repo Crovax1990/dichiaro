@@ -4,7 +4,7 @@ Parser for structured textual 730 PDFs.
 Format: 3-page PDF where each line follows patterns like:
     Quadro C, Rigo 1, colonna 3 - Reddito:  39043 €
     PL, Rigo 50, colonna 1 - Imposta netta:  9005 €
-    Cognome:  GOBBI
+    Cognome:  ROSSI
 
 Uses a state machine to track current section and regex to extract fields.
 """
@@ -64,7 +64,7 @@ SOSTITUTO_KEYS = {
 def parse_730(pdf_path: str | Path) -> dict:
     """Parse a textual 730 PDF and return structured data."""
     doc = fitz.open(str(pdf_path))
-    full_text = _get_full_text(doc)
+    full_text = "\n".join(page.get_text("text") for page in doc)
     doc.close()
 
     lines = _unwrap_lines(full_text.split("\n"))
@@ -73,7 +73,6 @@ def parse_730(pdf_path: str | Path) -> dict:
         "metadata": {},
         "quadro_b": [],
         "quadro_c": [],
-        "quadro_d": [],
         "quadro_e": [],
         "prospetto_liquidazione": {},
         "validazione": None,
@@ -128,7 +127,7 @@ def parse_730(pdf_path: str | Path) -> dict:
             if source == "PL" or current_section == "prospetto_liquidazione":
                 key = f"rigo_{rigo}_col_{colonna}"
                 result["prospetto_liquidazione"][key] = entry
-            elif current_section in ("quadro_b", "quadro_c", "quadro_d", "quadro_e"):
+            elif current_section in ("quadro_b", "quadro_c", "quadro_e"):
                 result[current_section].append(entry)
             continue
 
@@ -168,14 +167,6 @@ def parse_730(pdf_path: str | Path) -> dict:
 
 
 # ── Helpers ─────────────────────────────────────────────────────────
-
-def _get_full_text(doc) -> str:
-    """Extract concatenated text from all pages."""
-    parts = []
-    for page in doc:
-        parts.append(page.get_text("text"))
-    return "\n".join(parts)
-
 
 def _unwrap_lines(lines: list[str]) -> list[str]:
     """
