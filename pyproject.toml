@@ -1,7 +1,7 @@
 [project]
-name = "dichiarazione730-analyzer"
-version = "0.1.0"
-description = "Gestione e analisi dichiarazioni 730 per panoramica economica familiare"
+name = "dichiaro"
+version = "1.0.0"
+description = "Il tuo 730 sotto controllo — importa, analizza e monitora le dichiarazioni dei redditi"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [

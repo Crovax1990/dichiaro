@@ -6,6 +6,7 @@ from pathlib import Path
 
 from backend.parser.normalizer import normalize_value, _parse_number
 from backend.parser.extractor import parse_730, _unwrap_lines, _validate
+from backend.parser.importer import import_pdf_to_db
 
 
 # ── Normalizer ──────────────────────────────────────────────────────

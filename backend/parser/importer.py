@@ -24,20 +24,44 @@ UTILIZZO_MAP = {
 
 def import_pdf_to_db(
     pdf_path: str | Path,
-    persona_id: int,
-    anno: int,
     session: Session,
-) -> Dichiarazione:
+    persona_id: int | None = None,
+    anno: int | None = None,
+) -> tuple[Dichiarazione, Persona, bool]:
     """
     Parse a textual 730 PDF and import its data into the database.
 
-    Returns the created Dichiarazione record.
+    Auto-detects anno and persona from PDF metadata if not provided.
+    Creates persona record if CF not found (ponytail: single upsert, add conflict handling if needed).
+
+    Returns (dichiarazione, persona, persona_created).
     """
     data = parse_730(pdf_path)
+    meta = data.get("metadata", {})
+
+    actual_anno = anno or meta.get("anno")
+    cf = meta.get("codice_fiscale")
+    nome = meta.get("nome", "")
+    cognome = meta.get("cognome", "")
+
+    persona_created = False
+    if persona_id:
+        persona = session.get(Persona, persona_id)
+        if not persona:
+            raise ValueError(f"Persona id={persona_id} not found")
+    elif cf:
+        persona = session.query(Persona).filter_by(codice_fiscale=cf).first()
+        if not persona:
+            persona = Persona(codice_fiscale=cf, nome=nome or "", cognome=cognome or "")
+            session.add(persona)
+            session.flush()
+            persona_created = True
+    else:
+        raise ValueError("No persona_id provided and no CF found in PDF metadata")
 
     dich = Dichiarazione(
-        persona_id=persona_id,
-        anno_fiscale=anno,
+        persona_id=persona.id,
+        anno_fiscale=actual_anno,
         tipo="730",
         congiunta=False,
     )
@@ -50,7 +74,7 @@ def import_pdf_to_db(
             dichiarazione_id=dich.id,
             rigo=entry["rigo"],
             rendita=_num(entry, "Rendita"),
-            utilizzo=_str(entry) if entry.get("colonna") == 2 else None,
+            utilizzo=str(entry.get("valore")) if entry.get("colonna") == 2 and entry.get("valore") is not None else None,
             giorni_possesso=_num(entry, "Giorni"),
             percentuale=_num(entry, "Percentuale"),
         )
@@ -108,7 +132,7 @@ def import_pdf_to_db(
     session.add(r)
 
     session.commit()
-    return dich
+    return dich, persona, persona_created
 
 
 def _pl(pl: dict, suffix: str) -> float:
@@ -126,6 +150,4 @@ def _num(entry: dict, keyword: str) -> float:
     return 0
 
 
-def _str(entry: dict) -> str | None:
-    val = entry.get("valore")
-    return str(val) if val is not None else None
+

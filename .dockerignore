@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual env (uv manages its own)
+.venv/
+
+# Data (mounted at runtime)
+data/
+
+# Database
+*.db
+*.db-shm
+*.db-wal
+
+# Git
+.git/
+.gitignore
+
+# Tests (not needed at runtime)
+tests/
+
+# Docs
+AGENTS.md

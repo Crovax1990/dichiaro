@@ -22,9 +22,7 @@ _HERE = Path(__file__).resolve().parent
 _PROJECT = _HERE.parent
 sys.path.insert(0, str(_PROJECT))
 
-from sqlalchemy.orm import Session
-
-from backend.models import Base, Persona, create_engine_session
+from backend.models import Base, create_engine_session
 from backend.parser.importer import import_pdf_to_db
 
 
@@ -43,16 +41,6 @@ def _find_pdfs(data_dir: Path) -> list[tuple[int, str, Path]]:
         cf = m.group(2)
         results.append((anno, cf, pdf))
     return results
-
-
-def _get_or_create_persona(cf: str, session: Session) -> Persona:
-    existing = session.query(Persona).filter_by(codice_fiscale=cf).first()
-    if existing:
-        return existing
-    p = Persona(codice_fiscale=cf, nome="", cognome="")
-    session.add(p)
-    session.flush()
-    return p
 
 
 def main():
@@ -85,8 +73,8 @@ def main():
         progress = f"[{ok + len(errors) + 1}/{total}]"
         print(f"  {progress} {anno} — {cf} — {pdf.name}")
         try:
-            persona = _get_or_create_persona(cf, session)
-            import_pdf_to_db(str(pdf), persona.id, anno, session)
+            dich, persona, created = import_pdf_to_db(str(pdf), session)
+            tag = "🆕" if created else "  "
             ok += 1
         except Exception as e:
             msg = str(e)

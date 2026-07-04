@@ -1,6 +1,5 @@
-"""Famiglia730 — Dashboard per gestione e analisi dichiarazioni 730."""
+"""Dichiaro — Il tuo 730 sotto controllo."""
 
-import io
 import tempfile
 from pathlib import Path
 
@@ -19,8 +18,8 @@ from backend.parser.importer import import_pdf_to_db
 from backend.parser.registry import supported_years
 
 st.set_page_config(
-    page_title="Famiglia730",
-    page_icon="📊",
+    page_title="Dichiaro",
+    page_icon="🏛️",
     layout="wide",
 )
 
@@ -119,7 +118,7 @@ def _pl_preview(pl: dict, suffix: str) -> str:
 
 # ── Sidebar ──────────────────────────────────────────────────────────
 
-st.sidebar.title("📊 Famiglia730")
+st.sidebar.title("🏛️ Dichiaro")
 
 session = get_session()
 
@@ -154,157 +153,153 @@ anni_disponibili = [d.anno_fiscale for d in session.query(Dichiarazione.anno_fis
 anno = st.sidebar.selectbox("Anno fiscale", anni_disponibili + [max(supported_years())] if anni_disponibili else supported_years(), index=len(anni_disponibili)-1 if anni_disponibili else 0)
 
 # Navigation
-page = st.sidebar.radio("Sezione", ["📤 Importa PDF", "📝 Inserimento Manuale", "📊 Riepilogo Annuale", "📈 Trend", "🔔 Alert"])
+page = st.sidebar.radio("Sezione", ["📤 Importa PDF", "📊 Riepilogo Annuale", "📈 Trend", "🔔 Alert"])
 
 # ── Import PDF ───────────────────────────────────────────────────────
 
 if page == "📤 Importa PDF":
     st.title("Importa 730 da PDF")
+    st.caption("Carica uno o più PDF — anno e persona vengono rilevati automaticamente.")
 
-    uploaded = st.file_uploader("Carica il PDF del 730/RedditiPF", type=["pdf"])
+    uploaded_files = st.file_uploader(
+        "Carica i PDF del 730/RedditiPF", type=["pdf"], accept_multiple_files=True
+    )
 
-    if uploaded and selected_persona:
-        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
-            tmp.write(uploaded.read())
-            tmp_path = tmp.name
+    if uploaded_files:
+        st.info(f"{len(uploaded_files)} file{'s' if len(uploaded_files) > 1 else ''} caricato{'i' if len(uploaded_files) > 1 else ''}")
 
-        if st.button("🔍 Analizza PDF"):
-            with st.spinner("Estrazione dati in corso..."):
-                try:
-                    data = parse_730(tmp_path)
-                except Exception as e:
-                    st.error(str(e))
-                    data = {}
+        if st.button("🔍 Analizza tutti", type="primary"):
+            previews = []
+            temp_paths = []
 
-            st.subheader("Dati estratti — verifica prima di salvare")
+            with st.spinner(f"Analisi di {len(uploaded_files)} file in corso..."):
+                for uf in uploaded_files:
+                    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+                        tmp.write(uf.read())
+                        tmp_path = tmp.name
+                    temp_paths.append(tmp_path)
 
-            # Show key metadata
-            meta = data.get("metadata", {})
-            st.caption(f"Anno: {meta.get('anno')} | CF: {meta.get('codice_fiscale')} | {meta.get('cognome')} {meta.get('nome')}")
+                    try:
+                        data = parse_730(tmp_path)
+                        meta = data.get("metadata", {})
+                        pl = data.get("prospetto_liquidazione", {})
+                        val = data.get("validazione", {})
 
-            # Show key PL values
-            pl = data.get("prospetto_liquidazione", {})
-            cols = st.columns(4)
-            cols[0].metric("Reddito Compl.", _pl_preview(pl, "11_col_1"))
-            cols[1].metric("Imposta Lorda", _pl_preview(pl, "16_col_1"))
-            cols[2].metric("Imposta Netta", _pl_preview(pl, "50_col_1"))
-            cols[3].metric("Differenza", _pl_preview(pl, "60_col_1"))
+                        cf = meta.get("codice_fiscale", "—")
+                        existing = session.query(Persona).filter_by(codice_fiscale=cf).first()
 
-            # Validation
-            val = data.get("validazione", {})
-            if val.get("ok") is True:
-                st.success(f"✅ Validazione OK: {val.get('imposta_lorda')} - {val.get('totale_detrazioni')} = {val.get('imposta_netta_dichiarata')}")
-            elif val.get("ok") is False:
-                st.error(f"❌ Validazione fallita: atteso {val.get('imposta_netta_calcolata')}, trovato {val.get('imposta_netta_dichiarata')}")
+                        previews.append({
+                            "filename": uf.name,
+                            "path": tmp_path,
+                            "data": data,
+                            "anno": meta.get("anno", "—"),
+                            "cf": cf,
+                            "nome": meta.get("nome", "—"),
+                            "cognome": meta.get("cognome", "—"),
+                            "reddito": _pl_preview(pl, "11_col_1"),
+                            "imposta_netta": _pl_preview(pl, "50_col_1"),
+                            "differenza": _pl_preview(pl, "60_col_1"),
+                            "validazione_ok": val.get("ok"),
+                            "persona_esistente": existing is not None,
+                        })
+                    except Exception as e:
+                        previews.append({
+                            "filename": uf.name,
+                            "path": tmp_path,
+                            "data": None,
+                            "errore": str(e),
+                        })
 
-            # Show PL detail
-            with st.expander("Dettaglio Prospetto di Liquidazione"):
+            st.session_state["import_previews"] = previews
+            st.session_state["import_temp_paths"] = temp_paths
+            st.rerun()
+
+    # ── Preview results ──
+    if "import_previews" in st.session_state and st.session_state["import_previews"]:
+        previews = st.session_state["import_previews"]
+
+        st.subheader("📋 Riepilogo importazione")
+
+        valid = [p for p in previews if p.get("data") and not p.get("errore")]
+        errors = [p for p in previews if p.get("errore")]
+        new_persone = [p for p in valid if not p.get("persona_esistente")]
+
+        col1, col2, col3 = st.columns(3)
+        col1.metric("File validi", len(valid))
+        col2.metric("Persone da creare", len(new_persone))
+        col3.metric("Errori", len(errors), delta=None if not errors else f"-{len(errors)}", delta_color="inverse" if errors else "off")
+
+        df_preview = pd.DataFrame([{
+            "File": p["filename"],
+            "Anno": p.get("anno", "—"),
+            "CF": p.get("cf", "—"),
+            "Persona": f"{p.get('cognome', '—')} {p.get('nome', '—')}",
+            "Stato persona": "✅ Esistente" if p.get("persona_esistente") else "🆕 Da creare",
+            "Reddito": p.get("reddito", "—"),
+            "Imposta netta": p.get("imposta_netta", "—"),
+            "Differenza": p.get("differenza", "—"),
+            "Validazione": "✅" if p.get("validazione_ok") is True else ("❌" if p.get("validazione_ok") is False else "—"),
+            "Errore": p.get("errore", ""),
+        } for p in previews])
+        st.dataframe(df_preview, use_container_width=True, hide_index=True)
+
+        # Expanded detail per file
+        for p in valid:
+            with st.expander(f"📄 {p['filename']} — {p['anno']} — {p.get('cognome','')} {p.get('nome','')}"):
+                pl = p["data"].get("prospetto_liquidazione", {})
                 pl_rows = []
                 for k, v in sorted(pl.items()):
                     if isinstance(v, dict):
-                        pl_rows.append({"Rigo/Col": k.replace("rigo_", "").replace("_col_", "/"), "Descrizione": v.get("descrizione", ""), "Valore": v.get("valore")})
+                        pl_rows.append({
+                            "Rigo/Col": k.replace("rigo_", "").replace("_col_", "/"),
+                            "Descrizione": v.get("descrizione", ""),
+                            "Valore": v.get("valore"),
+                        })
                 if pl_rows:
                     st.dataframe(pd.DataFrame(pl_rows), use_container_width=True, hide_index=True)
 
-            if st.button("✅ Conferma e Salva"):
-                with st.spinner("Salvataggio..."):
-                    try:
-                        dich = import_pdf_to_db(tmp_path, selected_persona.id, anno, session)
-                        st.success(f"Dichiarazione {anno} salvata (ID: {dich.id})")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Errore salvataggio: {e}")
+        # Bulk confirm
+        col_btn, col_clr = st.columns([2, 1])
+        with col_btn:
+            if st.button("✅ Conferma e Salva tutti", type="primary", disabled=not valid):
+                imported = 0
+                created_persone = 0
+                failed = []
 
-        Path(tmp_path).unlink(missing_ok=True)
-    elif not selected_persona:
-        st.warning("Crea o seleziona una persona nella sidebar")
+                with st.spinner(f"Salvataggio {len(valid)} dichiarazioni..."):
+                    for p in valid:
+                        try:
+                            dich, persona, persona_created = import_pdf_to_db(p["path"], session)
+                            imported += 1
+                            if persona_created:
+                                created_persone += 1
+                        except Exception as e:
+                            failed.append((p["filename"], str(e)))
+                            session.rollback()
 
-# ── Manual Entry ─────────────────────────────────────────────────────
+                # Cleanup temp files
+                for tp in st.session_state.get("import_temp_paths", []):
+                    Path(tp).unlink(missing_ok=True)
 
-elif page == "📝 Inserimento Manuale":
-    st.title("Inserimento Manuale")
+                if imported:
+                    msg = f"✅ {imported} dichiarazione{'i' if imported != 1 else ''} importata{'e' if imported != 1 else ''}"
+                    if created_persone:
+                        msg += f" — {created_persone} nuova{' persona' if created_persone == 1 else ' persone'} creata{'e' if created_persone != 1 else ''}"
+                    st.success(msg)
+                if failed:
+                    for fname, err in failed:
+                        st.error(f"Errore {fname}: {err}")
 
-    if not selected_persona:
-        st.warning("Seleziona una persona nella sidebar")
-    else:
-        existing = session.query(Dichiarazione).filter_by(
-            persona_id=selected_persona.id, anno_fiscale=anno
-        ).first()
+                del st.session_state["import_previews"]
+                st.session_state.pop("import_temp_paths", None)
+                st.rerun()
 
-        with st.form("manual_entry"):
-            st.subheader(f"Dichiarazione {anno} — {selected_persona.nome} {selected_persona.cognome}")
-
-            col1, col2 = st.columns(2)
-            reddito_lavoro = col1.number_input("Reddito lavoro dipendente (€)", value=0.0, step=100.0, format="%.0f")
-            ritenute = col2.number_input("Ritenute IRPEF (€)", value=0.0, step=100.0, format="%.0f")
-
-            imposta_netta = col1.number_input("Imposta netta (€)", value=0.0, step=100.0, format="%.0f")
-            differenza = col2.number_input("Differenza (+ debito / - credito) (€)", value=0.0, step=10.0, format="%.0f")
-            reddito_complessivo = col1.number_input("Reddito complessivo (€)", value=0.0, step=100.0, format="%.0f")
-
-            st.subheader("Oneri detraibili (Quadro E)")
-            spese_sanitarie = st.number_input("Spese sanitarie (€)", value=0.0, step=10.0, format="%.0f")
-            interessi_mutuo = st.number_input("Interessi mutuo prima casa (€)", value=0.0, step=10.0, format="%.0f")
-            spese_istruzione = st.number_input("Spese istruzione (€)", value=0.0, step=10.0, format="%.0f")
-            assicurazioni = st.number_input("Premi assicurazioni vita/infortuni (€)", value=0.0, step=10.0, format="%.0f")
-
-            submitted = st.form_submit_button("💾 Salva dichiarazione")
-
-            if submitted:
-                if existing:
-                    dich = existing
-                else:
-                    dich = Dichiarazione(persona_id=selected_persona.id, anno_fiscale=anno, tipo="730")
-                    session.add(dich)
-                    session.flush()
-
-                if existing:
-                    existing_qc = session.query(QuadroC_Lavoro).filter_by(dichiarazione_id=dich.id).first()
-                    if existing_qc:
-                        existing_qc.reddito = reddito_lavoro
-                        existing_qc.ritenute = ritenute
-
-                if not existing or not session.query(QuadroC_Lavoro).filter_by(dichiarazione_id=dich.id).first():
-                    qc = QuadroC_Lavoro(dichiarazione_id=dich.id, rigo=1, reddito=reddito_lavoro, ritenute=ritenute)
-                    session.add(qc)
-
-                existing_r = session.query(Risultato).filter_by(dichiarazione_id=dich.id).first()
-                if existing_r:
-                    existing_r.imposta_netta = imposta_netta
-                    existing_r.ritenute = ritenute
-                    existing_r.differenza = differenza
-                    existing_r.esito = "credito" if differenza < 0 else "debito"
-                    existing_r.reddito_complessivo = reddito_complessivo
-                else:
-                    r = Risultato(
-                        dichiarazione_id=dich.id,
-                        imposta_netta=imposta_netta,
-                        ritenute=ritenute,
-                        differenza=differenza,
-                        esito="credito" if differenza < 0 else "debito",
-                        reddito_complessivo=reddito_complessivo,
-                    )
-                    session.add(r)
-
-                # Oneri
-                oneri_data = [
-                    ("E1", "Spese sanitarie", spese_sanitarie),
-                    ("E7", "Interessi mutuo", interessi_mutuo),
-                    ("E12", "Spese istruzione", spese_istruzione),
-                    ("E8", "Assicurazioni", assicurazioni),
-                ]
-                for codice, desc, importo in oneri_data:
-                    if importo > 0:
-                        existing_onere = session.query(QuadroE_Oneri).filter_by(
-                            dichiarazione_id=dich.id, codice_rigo=codice
-                        ).first()
-                        if existing_onere:
-                            existing_onere.importo = importo
-                        else:
-                            session.add(QuadroE_Oneri(dichiarazione_id=dich.id, codice_rigo=codice, descrizione=desc, importo=importo))
-
-                session.commit()
-                st.success("Dichiarazione salvata")
+        with col_clr:
+            if st.button("🗑️ Annulla"):
+                for tp in st.session_state.get("import_temp_paths", []):
+                    Path(tp).unlink(missing_ok=True)
+                del st.session_state["import_previews"]
+                st.session_state.pop("import_temp_paths", None)
                 st.rerun()
 
 # ── Riepilogo Annuale ───────────────────────────────────────────────
@@ -320,7 +315,7 @@ elif page == "📊 Riepilogo Annuale":
         ).first()
 
         if not dich or not dich.risultato:
-            st.info(f"Nessun dato per {anno}. Importa un PDF o inserisci manualmente.")
+            st.info(f"Nessun dato per {anno}. Importa un PDF nella sezione Importa.")
         else:
             r = dich.risultato
             aliquota = (r.imposta_netta / r.reddito_complessivo * 100) if r.reddito_complessivo else 0
