@@ -1,5 +1,6 @@
 from sqlalchemy import (
-    Column, Integer, String, Float, Date, Boolean, ForeignKey, Text, create_engine, event
+    Column, Integer, String, Float, Date, Boolean, ForeignKey, Text,
+    Index, UniqueConstraint, create_engine, event
 )
 from sqlalchemy.orm import DeclarativeBase, relationship, sessionmaker
 
@@ -21,6 +22,48 @@ class Persona(Base):
     provincia_nascita = Column(String(2), nullable=True)
 
     dichiarazioni = relationship("Dichiarazione", back_populates="persona", cascade="all, delete-orphan")
+    certificazioni_uniche = relationship(
+        "CertificazioneUnica", back_populates="persona", cascade="all, delete-orphan"
+    )
+
+
+class CertificazioneUnica(Base):
+    __tablename__ = "certificazione_unica"
+    __table_args__ = (
+        UniqueConstraint("hash_file", name="uq_certificazione_unica_hash_file"),
+        Index("ix_cu_persona_anno", "persona_id", "anno_fiscale"),
+        Index("ix_cu_sostituto", "codice_fiscale_sostituto"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    persona_id = Column(Integer, ForeignKey("persona.id"), nullable=False, index=True)
+    anno_fiscale = Column(Integer, nullable=False, index=True)
+    anno_modello = Column(Integer, nullable=True)
+    numero_modello = Column(Integer, nullable=True)
+    codice_fiscale_sostituto = Column(String(16), nullable=True)
+    denominazione_sostituto = Column(String(200), nullable=True)
+    identificativo_dichiarazione = Column(String(100), nullable=True)
+    data_documento = Column(Date, nullable=True)
+    nome_file = Column(String(255), nullable=False)
+    hash_file = Column(String(64), nullable=False)
+
+    reddito_principale = Column(Float, nullable=True)
+    ritenute_irpef = Column(Float, nullable=True)
+    addizionale_regionale = Column(Float, nullable=True)
+    addizionale_comunale = Column(Float, nullable=True)
+    imposta_lorda = Column(Float, nullable=True)
+    totale_detrazioni = Column(Float, nullable=True)
+    imposta_netta = Column(Float, nullable=True)
+    trattamento_integrativo = Column(Float, nullable=True)
+    benefit = Column(Float, nullable=True)
+
+    payload_json = Column(Text, nullable=False)
+    testo_originale = Column(Text, nullable=True)
+    parser_version = Column(String(50), nullable=True)
+    stato = Column(String(20), nullable=False, default="ok")
+    note = Column(Text, nullable=True)
+
+    persona = relationship("Persona", back_populates="certificazioni_uniche")
 
 
 class Dichiarazione(Base):
@@ -125,6 +168,11 @@ def create_engine_session(db_path: str = "backend/analyzer.db") -> tuple:
         cursor.execute("PRAGMA foreign_keys=ON")
         cursor.close()
 
-    Base.metadata.create_all(engine)
+    upgrade_schema(engine)
     SessionLocal = sessionmaker(bind=engine)
     return engine, SessionLocal
+
+
+def upgrade_schema(engine) -> None:
+    """Create missing tables while leaving existing 730 data untouched."""
+    Base.metadata.create_all(engine)

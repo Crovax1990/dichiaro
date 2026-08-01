@@ -1,8 +1,10 @@
 """Dichiaro — Il tuo 730 sotto controllo."""
 
+import hashlib
 import tempfile
 from pathlib import Path
 
+import fitz
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -10,11 +12,14 @@ import plotly.graph_objects as go
 from sqlalchemy.orm import Session
 
 from backend.models import (
-    Persona, Dichiarazione, QuadroC_Lavoro, QuadroB_Fabbricati,
-    QuadroE_Oneri, Risultato, create_engine_session,
+    Persona, Dichiarazione, CertificazioneUnica, QuadroC_Lavoro,
+    QuadroB_Fabbricati, QuadroE_Oneri, Risultato, create_engine_session,
 )
 from backend.parser.extractor import parse_730
 from backend.parser.importer import import_pdf_to_db
+from backend.parser.cu_extractor import parse_cu
+from backend.parser.cu_importer import import_cu_to_db
+from backend.parser.cu_summary import compare_cu_with_730, summarize_cu
 from datetime import date
 
 st.set_page_config(
@@ -99,6 +104,68 @@ def _pl_preview(pl: dict, suffix: str) -> str:
     return "—"
 
 
+def _cu_point(data: dict, code: str, section: str | None = None):
+    for module in data.get("moduli", []):
+        for current_section, points in module.get("sezioni", {}).items():
+            if section and current_section != section:
+                continue
+            if code in points:
+                return points[code].get("valore")
+    return None
+
+
+def _file_hash(path: str | Path) -> str:
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _is_cu_pdf(path: str | Path, filename: str = "") -> bool:
+    if filename.upper().startswith("CUK_"):
+        return True
+    doc = fitz.open(str(path))
+    try:
+        text = " ".join(page.get_text("text") for page in doc)
+    finally:
+        doc.close()
+    return "CERTIFICAZIONE UNICA" in text.upper()
+
+
+def _render_cu_summary(session: Session, persona: Persona, anno_fiscale: int) -> None:
+    summary = summarize_cu(session, persona.id, anno_fiscale)
+    if not summary["numero_cu"]:
+        return
+
+    st.subheader("Certificazioni Uniche")
+    totals = summary["totali"]
+    cols = st.columns(4)
+    cols[0].metric("CU ricevute", summary["numero_cu"])
+    cols[1].metric("Redditi certificati", f"€ {totals['reddito_principale']:,.2f}")
+    cols[2].metric("Ritenute IRPEF", f"€ {totals['ritenute_irpef']:,.2f}")
+    cols[3].metric("Sostituti", len(summary["sostituti"]))
+
+    st.dataframe(pd.DataFrame([{
+        "Documento": source["file_name"],
+        "Sostituto": source["sostituto"] or "—",
+        "Reddito": f"€ {source['valori'].get('reddito_principale', 0):,.2f}",
+        "Ritenute": f"€ {source['valori'].get('ritenute_irpef', 0):,.2f}",
+        "Stato": source["stato"],
+    } for source in summary["fonti"]]), use_container_width=True, hide_index=True)
+
+    comparison = compare_cu_with_730(session, persona.id, anno_fiscale)
+    if comparison["stato"] == "730_assente":
+        st.info("CU disponibili; nessun 730 importato per questo anno.")
+    elif comparison["stato"] == "coerente":
+        st.success("Totale redditi CU coerente con il Quadro C del 730.")
+    else:
+        st.warning(
+            f"Differenza CU/730: € {comparison['differenza']:,.2f}. "
+            "Le fonti restano separate e non vengono corrette automaticamente."
+        )
+
+
 # ── Sidebar ──────────────────────────────────────────────────────────
 
 st.sidebar.title("🏛️ Dichiaro")
@@ -132,8 +199,14 @@ else:
     selected_persona = persona_map[selected_persona_name]
 
 # Anno dropdown
-anni_disponibili = [d.anno_fiscale for d in session.query(Dichiarazione.anno_fiscale).distinct().order_by(Dichiarazione.anno_fiscale)]
-anno = st.sidebar.selectbox("Anno fiscale", anni_disponibili + [date.today().year] if anni_disponibili else [date.today().year], index=len(anni_disponibili)-1 if anni_disponibili else 0)
+anni_730 = {d[0] for d in session.query(Dichiarazione.anno_fiscale).distinct().all()}
+anni_cu = {d[0] for d in session.query(CertificazioneUnica.anno_fiscale).distinct().all()}
+anni_disponibili = sorted(anni_730 | anni_cu)
+anno = st.sidebar.selectbox(
+    "Anno fiscale",
+    anni_disponibili + [date.today().year] if anni_disponibili else [date.today().year],
+    index=len(anni_disponibili) - 1 if anni_disponibili else 0,
+)
 
 # Navigation
 page = st.sidebar.radio("Sezione", ["📤 Importa PDF", "📊 Riepilogo Annuale", "📈 Trend", "🔔 Alert"])
@@ -141,11 +214,11 @@ page = st.sidebar.radio("Sezione", ["📤 Importa PDF", "📊 Riepilogo Annuale"
 # ── Import PDF ───────────────────────────────────────────────────────
 
 if page == "📤 Importa PDF":
-    st.title("Importa 730 da PDF")
-    st.caption("Carica uno o più PDF — anno e persona vengono rilevati automaticamente.")
+    st.title("Importa 730 e CU da PDF")
+    st.caption("Carica uno o più PDF — tipo, anno e persona vengono rilevati automaticamente.")
 
     uploaded_files = st.file_uploader(
-        "Carica i PDF del 730/RedditiPF", type=["pdf"], accept_multiple_files=True
+        "Carica i PDF del 730 o della Certificazione Unica", type=["pdf"], accept_multiple_files=True
     )
 
     if uploaded_files:
@@ -163,28 +236,57 @@ if page == "📤 Importa PDF":
                     temp_paths.append(tmp_path)
 
                     try:
-                        data = parse_730(tmp_path)
+                        tipo = "CU" if _is_cu_pdf(tmp_path, uf.name) else "730"
+                        data = parse_cu(tmp_path) if tipo == "CU" else parse_730(tmp_path)
                         meta = data.get("metadata", {})
-                        pl = data.get("prospetto_liquidazione", {})
-                        val = data.get("validazione", {})
-
                         cf = meta.get("codice_fiscale", "—")
                         existing = session.query(Persona).filter_by(codice_fiscale=cf).first()
+                        duplicate = (
+                            tipo == "CU"
+                            and session.query(CertificazioneUnica).filter_by(
+                                hash_file=_file_hash(tmp_path)
+                            ).first() is not None
+                        )
 
-                        previews.append({
-                            "filename": uf.name,
-                            "path": tmp_path,
-                            "data": data,
-                            "anno": meta.get("anno", "—"),
-                            "cf": cf,
-                            "nome": meta.get("nome", "—"),
-                            "cognome": meta.get("cognome", "—"),
-                            "reddito": _pl_preview(pl, "11_col_1"),
-                            "imposta_netta": _pl_preview(pl, "50_col_1"),
-                            "differenza": _pl_preview(pl, "60_col_1"),
-                            "validazione_ok": val.get("ok"),
-                            "persona_esistente": existing is not None,
-                        })
+                        if tipo == "CU":
+                            validation = data.get("extraction", {})
+                            previews.append({
+                                "filename": uf.name,
+                                "path": tmp_path,
+                                "tipo": tipo,
+                                "data": data,
+                                "anno": data.get("document", {}).get("anno_fiscale", "—"),
+                                "cf": cf,
+                                "nome": meta.get("nome", "—"),
+                                "cognome": meta.get("cognome", "—"),
+                                "sostituto": data.get("sostituto", {}).get("denominazione", "—"),
+                                "reddito": _cu_point(data, "1", "lavoro_dipendente"),
+                                "imposta_netta": _cu_point(data, "375"),
+                                "differenza": "—",
+                                "validazione_ok": validation.get("status") in {"ok", "warning"},
+                                "persona_esistente": existing is not None,
+                                "duplicato": duplicate,
+                            })
+                        else:
+                            pl = data.get("prospetto_liquidazione", {})
+                            val = data.get("validazione", {})
+                            previews.append({
+                                "filename": uf.name,
+                                "path": tmp_path,
+                                "tipo": tipo,
+                                "data": data,
+                                "anno": meta.get("anno", "—"),
+                                "cf": cf,
+                                "nome": meta.get("nome", "—"),
+                                "cognome": meta.get("cognome", "—"),
+                                "sostituto": "—",
+                                "reddito": _pl_preview(pl, "11_col_1"),
+                                "imposta_netta": _pl_preview(pl, "50_col_1"),
+                                "differenza": _pl_preview(pl, "60_col_1"),
+                                "validazione_ok": val.get("ok"),
+                                "persona_esistente": existing is not None,
+                                "duplicato": False,
+                            })
                     except Exception as e:
                         previews.append({
                             "filename": uf.name,
@@ -214,14 +316,17 @@ if page == "📤 Importa PDF":
 
         df_preview = pd.DataFrame([{
             "File": p["filename"],
+            "Tipo": p.get("tipo", "730"),
             "Anno": p.get("anno", "—"),
             "CF": p.get("cf", "—"),
             "Persona": f"{p.get('cognome', '—')} {p.get('nome', '—')}",
+            "Sostituto": p.get("sostituto", "—"),
             "Stato persona": "✅ Esistente" if p.get("persona_esistente") else "🆕 Da creare",
             "Reddito": p.get("reddito", "—"),
             "Imposta netta": p.get("imposta_netta", "—"),
             "Differenza": p.get("differenza", "—"),
             "Validazione": "✅" if p.get("validazione_ok") is True else ("❌" if p.get("validazione_ok") is False else "—"),
+            "Duplicato": "⚠️" if p.get("duplicato") else "",
             "Errore": p.get("errore", ""),
         } for p in previews])
         st.dataframe(df_preview, use_container_width=True, hide_index=True)
@@ -229,30 +334,51 @@ if page == "📤 Importa PDF":
         # Expanded detail per file
         for p in valid:
             with st.expander(f"📄 {p['filename']} — {p['anno']} — {p.get('cognome','')} {p.get('nome','')}"):
-                pl = p["data"].get("prospetto_liquidazione", {})
-                pl_rows = []
-                for k, v in sorted(pl.items()):
-                    if isinstance(v, dict):
-                        pl_rows.append({
-                            "Rigo/Col": k.replace("rigo_", "").replace("_col_", "/"),
-                            "Descrizione": v.get("descrizione", ""),
-                            "Valore": v.get("valore"),
-                        })
-                if pl_rows:
-                    st.dataframe(pd.DataFrame(pl_rows), use_container_width=True, hide_index=True)
+                if p.get("tipo") == "CU":
+                    rows = []
+                    for module in p["data"].get("moduli", []):
+                        for section, points in module.get("sezioni", {}).items():
+                            for code, value in points.items():
+                                rows.append({
+                                    "Sezione": section,
+                                    "Punto": code,
+                                    "Etichetta": value.get("etichetta", ""),
+                                    "Valore": value.get("valore"),
+                                })
+                    if rows:
+                        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+                else:
+                    pl = p["data"].get("prospetto_liquidazione", {})
+                    pl_rows = []
+                    for k, v in sorted(pl.items()):
+                        if isinstance(v, dict):
+                            pl_rows.append({
+                                "Rigo/Col": k.replace("rigo_", "").replace("_col_", "/"),
+                                "Descrizione": v.get("descrizione", ""),
+                                "Valore": v.get("valore"),
+                            })
+                    if pl_rows:
+                        st.dataframe(pd.DataFrame(pl_rows), use_container_width=True, hide_index=True)
 
         # Bulk confirm
         col_btn, col_clr = st.columns([2, 1])
         with col_btn:
             if st.button("✅ Conferma e Salva tutti", type="primary", disabled=not valid):
                 imported = 0
+                skipped = 0
                 created_persone = 0
                 failed = []
 
-                with st.spinner(f"Salvataggio {len(valid)} dichiarazioni..."):
+                with st.spinner(f"Salvataggio {len(valid)} documenti..."):
                     for p in valid:
                         try:
-                            dich, persona, persona_created = import_pdf_to_db(p["path"], session)
+                            if p.get("duplicato"):
+                                skipped += 1
+                                continue
+                            if p.get("tipo") == "CU":
+                                _, _, persona_created = import_cu_to_db(p["path"], session)
+                            else:
+                                _, _, persona_created = import_pdf_to_db(p["path"], session)
                             imported += 1
                             if persona_created:
                                 created_persone += 1
@@ -265,10 +391,12 @@ if page == "📤 Importa PDF":
                     Path(tp).unlink(missing_ok=True)
 
                 if imported:
-                    msg = f"✅ {imported} dichiarazione{'i' if imported != 1 else ''} importata{'e' if imported != 1 else ''}"
+                    msg = f"✅ {imported} document{'i' if imported != 1 else 'o'} importat{'i' if imported != 1 else 'o'}"
                     if created_persone:
                         msg += f" — {created_persone} nuova{' persona' if created_persone == 1 else ' persone'} creata{'e' if created_persone != 1 else ''}"
                     st.success(msg)
+                if skipped:
+                    st.info(f"{skipped} document{'i' if skipped != 1 else 'o'} già importat{'i' if skipped != 1 else 'o'} ignorat{'i' if skipped != 1 else 'o'}")
                 if failed:
                     for fname, err in failed:
                         st.error(f"Errore {fname}: {err}")
@@ -297,9 +425,17 @@ elif page == "📊 Riepilogo Annuale":
             persona_id=selected_persona.id, anno_fiscale=anno
         ).first()
 
+        cu_count = session.query(CertificazioneUnica).filter_by(
+            persona_id=selected_persona.id, anno_fiscale=anno
+        ).count()
+
         if not dich or not dich.risultato:
-            st.info(f"Nessun dato per {anno}. Importa un PDF nella sezione Importa.")
+            if cu_count:
+                _render_cu_summary(session, selected_persona, anno)
+            else:
+                st.info(f"Nessun dato per {anno}. Importa un PDF nella sezione Importa.")
         else:
+            _render_cu_summary(session, selected_persona, anno)
             r = dich.risultato
             aliquota = (r.imposta_netta / r.reddito_complessivo * 100) if r.reddito_complessivo else 0
 
